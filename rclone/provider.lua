@@ -1,3 +1,4 @@
+local config = require 'rclone.config'
 local rc = require 'rclone.rc'
 
 local M = {}
@@ -50,6 +51,34 @@ end
 local function item_size(item)
   local size = item and (item.Size or item.size)
   return tonumber(size)
+end
+
+local function local_target_path(target_dir, name)
+  local base = tostring(target_dir.path or '')
+  if base == '' or base == '/' then return '/' .. tostring(name or '') end
+  return base .. '/' .. tostring(name or '')
+end
+
+local function run_interactive(cmd, cb)
+  deck.interactive(cmd, {
+    wait_confirm = function(code) return code ~= 0 end,
+  }, function(exit_code)
+    if exit_code == 0 then cb(true) else cb(false, 'rclone exited with code ' .. tostring(exit_code)) end
+  end)
+end
+
+local function run_interactive_commands(cmds, cb)
+  local index = 1
+  local function next_cmd()
+    local cmd = cmds[index]
+    if not cmd then cb(true) return end
+    run_interactive(cmd, function(ok, err)
+      if not ok then cb(false, err) return end
+      index = index + 1
+      next_cmd()
+    end)
+  end
+  next_cmd()
 end
 
 function M.new(remote, opt)
@@ -298,6 +327,77 @@ function M:rename(handle, name, cb)
     target.is_dir = handle.is_dir
     target.size = handle.size
     cb(true, nil, { target = target })
+  end)
+end
+
+function M:upload(source, target_dir, cb)
+  if not source or not source.provider or source.provider.name ~= 'local' then
+    cb(false, 'rclone upload only supports local source')
+    return
+  end
+  if source.operation == 'move' then
+    cb(false, 'cross-provider move is not supported')
+    return
+  end
+
+  local handles = source.handles or {}
+  if #handles == 0 then cb(true, nil, { targets = {} }) return end
+
+  local cmds = {}
+  for _, handle in ipairs(handles) do
+    local dest = full_remote_path(self:join(target_dir, handle.name))
+    local op = handle.is_dir and 'copy' or 'copyto'
+    table.insert(cmds, { config.get().command, op, '--progress', tostring(handle.path or ''), dest })
+  end
+
+  run_interactive_commands(cmds, function(ok, err)
+    if not ok then cb(false, err) return end
+
+    local targets = {}
+    for _, handle in ipairs(handles) do
+      local target = self:join(target_dir, handle.name)
+      target.is_dir = handle.is_dir
+      target.size = handle.size
+      table.insert(targets, target)
+    end
+    cb(true, nil, { targets = targets })
+  end)
+end
+
+function M:download(source, target_dir, cb)
+  if not target_dir or not target_dir.path then
+    cb(false, 'download target must be a local directory')
+    return
+  end
+  if source.operation == 'move' then
+    cb(false, 'cross-provider move is not supported')
+    return
+  end
+
+  local handles = source.handles or {}
+  if #handles == 0 then cb(true, nil, { targets = {} }) return end
+
+  local cmds = {}
+  for _, handle in ipairs(handles) do
+    local dest = local_target_path(target_dir, handle.name)
+    local op = handle.is_dir and 'copy' or 'copyto'
+    table.insert(cmds, { config.get().command, op, '--progress', full_remote_path(handle), dest })
+  end
+
+  run_interactive_commands(cmds, function(ok, err)
+    if not ok then cb(false, err) return end
+
+    local targets = {}
+    for _, handle in ipairs(handles) do
+      table.insert(targets, {
+        id = local_target_path(target_dir, handle.name),
+        name = handle.name,
+        path = local_target_path(target_dir, handle.name),
+        is_dir = handle.is_dir == true,
+        size = handle.size,
+      })
+    end
+    cb(true, nil, { targets = targets })
   end)
 end
 

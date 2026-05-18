@@ -9,6 +9,7 @@ rclone remote browser for lazydeck.
 - The plugin starts a local `rclone rcd` background process and all rclone operations go through the HTTP RC API.
 - It intentionally does not implement arbitrary command input or UI features outside `file.lazydeck` provider capabilities.
 - Directory listing skips modtime and MIME type by default for better performance on large directories / slower backends.
+- Cross-provider copy supports local `<->` rclone through `file.lazydeck` shared clipboard and rclone `copy` / `copyto --progress` via `deck.interactive`.
 
 ## Config
 
