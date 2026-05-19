@@ -5,6 +5,14 @@ local rc = require 'rclone.rc'
 
 local M = {}
 
+function M.meta()
+  return {
+    icon = '󰑃',
+    desc = 'Rclone remote file browser',
+    color = 'blue',
+  }
+end
+
 local runtime = {
   browsers = {},
 }
