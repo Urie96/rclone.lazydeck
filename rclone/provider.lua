@@ -81,6 +81,28 @@ local function run_interactive_commands(cmds, cb)
   next_cmd()
 end
 
+local function truncate_preview_content(value, max_chars, source_size)
+  local content = tostring(value or '')
+  local limit = math.max(tonumber(max_chars) or 3000, 0)
+  local size = tonumber(source_size)
+  local remote_truncated = size ~= nil and #content < size
+  if limit == 0 then return '', remote_truncated or content ~= '' end
+
+  local ok, char_count = pcall(utf8.len, content)
+  if ok and char_count then
+    if char_count <= limit then return content, remote_truncated end
+    local cut = utf8.offset(content, limit + 1)
+    if cut then return content:sub(1, cut - 1), true end
+    return content, remote_truncated
+  end
+
+  -- If the remote returned non-UTF-8 bytes, fall back to a byte cap. The
+  -- renderer accepts lossy strings, so this still avoids large previews while
+  -- keeping the original bytes as much as possible.
+  if #content <= limit then return content, remote_truncated end
+  return content:sub(1, limit), true
+end
+
 function M.new(remote, opt)
   local self = {
     name = 'rclone',
@@ -193,12 +215,14 @@ function M:stat(handle, cb)
 end
 
 function M:read_file(handle, opts, cb)
-  local max_chars = tonumber((opts or {}).max_chars) or 3000
+  local max_chars = math.max(tonumber((opts or {}).max_chars) or 3000, 0)
   -- rclone RC has no direct read-file primitive. Use core/command to execute
   -- rclone cat through the already running daemon, still over the HTTP RC API.
+  -- Request one extra character so the provider can tell whether the preview
+  -- was truncated instead of merely exactly max_chars long.
   rc.call('core/command', {
     command = 'cat',
-    arg = { full_remote_path(handle) },
+    arg = { '--head', tostring(max_chars + 1), full_remote_path(handle) },
     returnType = 'COMBINED_OUTPUT',
   }, function(result, err)
     if err then cb('', err) return end
@@ -206,12 +230,7 @@ function M:read_file(handle, opts, cb)
       cb('', 'invalid response from rclone core/command')
       return
     end
-    local content = tostring(result.result or '')
-    local truncated = false
-    if #content > max_chars then
-      content = content:sub(1, max_chars)
-      truncated = true
-    end
+    local content, truncated = truncate_preview_content(result.result or '', max_chars, handle.size)
     cb(content, nil, { truncated = truncated })
   end)
 end
