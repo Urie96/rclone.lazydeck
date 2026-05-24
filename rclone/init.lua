@@ -160,6 +160,12 @@ end
 
 function M.preview(entry, cb)
   if entry and entry.preview then return entry:preview(cb) end
+
+  local path = deck.api.get_current_path() or {}
+  if #path > 1 then
+    local browser = get_browser(path[2])
+    if browser then return browser:preview(entry, cb) end
+  end
 end
 
 return M
