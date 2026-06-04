@@ -83,15 +83,13 @@ end
 
 local function truncate_preview_content(value, max_chars, source_size)
   local content = tostring(value or '')
-  local limit = math.max(tonumber(max_chars) or 3000, 0)
   local size = tonumber(source_size)
   local remote_truncated = size ~= nil and #content < size
-  if limit == 0 then return '', remote_truncated or content ~= '' end
 
   local ok, char_count = pcall(utf8.len, content)
   if ok and char_count then
-    if char_count <= limit then return content, remote_truncated end
-    local cut = utf8.offset(content, limit + 1)
+    if char_count <= max_chars then return content, remote_truncated end
+    local cut = utf8.offset(content, max_chars + 1)
     if cut then return content:sub(1, cut - 1), true end
     return content, remote_truncated
   end
@@ -99,8 +97,8 @@ local function truncate_preview_content(value, max_chars, source_size)
   -- If the remote returned non-UTF-8 bytes, fall back to a byte cap. The
   -- renderer accepts lossy strings, so this still avoids large previews while
   -- keeping the original bytes as much as possible.
-  if #content <= limit then return content, remote_truncated end
-  return content:sub(1, limit), true
+  if #content <= max_chars then return content, remote_truncated end
+  return content:sub(1, max_chars), true
 end
 
 function M.new(remote, opt)
@@ -215,7 +213,20 @@ function M:stat(handle, cb)
 end
 
 function M:read_file(handle, opts, cb)
-  local max_chars = math.max(tonumber((opts or {}).max_chars) or 3000, 0)
+  local has_limit = opts and opts.max_chars ~= nil
+  local max_chars = has_limit and math.max(tonumber(opts.max_chars) or 3000, 0) or nil
+
+  if not has_limit then
+    deck.system.exec({ config.get().command, 'cat', full_remote_path(handle) }, function(out)
+      if tonumber(out.code or 0) ~= 0 then
+        cb('', trim(out.stderr) ~= '' and trim(out.stderr) or ('rclone exited with code ' .. tostring(out.code)))
+        return
+      end
+      cb(out.stdout or '', nil, { truncated = false })
+    end)
+    return
+  end
+
   -- rclone RC has no direct read-file primitive. Use core/command to execute
   -- rclone cat through the already running daemon, still over the HTTP RC API.
   -- Request one extra character so the provider can tell whether the preview
