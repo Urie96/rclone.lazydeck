@@ -360,6 +360,42 @@ function M:rename(handle, name, cb)
   end)
 end
 
+function M:copy_from(source, target_dir, cb)
+  if not source or not source.provider or source.provider.name ~= 'rclone' then
+    cb(false, 'rclone copy_from only supports rclone source')
+    return
+  end
+  if source.operation == 'move' then
+    cb(false, 'cross-provider move is not supported')
+    return
+  end
+
+  local handles = source.handles or {}
+  if #handles == 0 then cb(true, nil, { targets = {} }) return end
+
+  local cmds = {}
+  local targets = {}
+  for _, handle in ipairs(handles) do
+    if not handle.remote then
+      cb(false, 'rclone source handle missing remote')
+      return
+    end
+
+    local target = self:join(target_dir, handle.name)
+    target.is_dir = handle.is_dir == true
+    target.size = handle.size
+    table.insert(targets, target)
+
+    local op = handle.is_dir and 'copy' or 'copyto'
+    table.insert(cmds, { config.get().command, op, '--progress', full_remote_path(handle), full_remote_path(target) })
+  end
+
+  run_interactive_commands(cmds, function(ok, err)
+    if not ok then cb(false, err) return end
+    cb(true, nil, { targets = targets })
+  end)
+end
+
 function M:upload(source, target_dir, cb)
   if not source or not source.provider or source.provider.name ~= 'local' then
     cb(false, 'rclone upload only supports local source')
